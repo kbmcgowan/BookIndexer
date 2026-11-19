@@ -88,7 +88,7 @@ def candidate_key(document: str, term: str) -> tuple[str, str]:
     return document.strip().casefold(), normalized_term
 
 
-def load_keep_values(path: Path) -> dict[tuple[str, str], bool]:
+def load_review_values(path: Path) -> dict[tuple[str, str], dict[str, object]]:
     if not path.is_file():
         return {}
 
@@ -99,40 +99,47 @@ def load_keep_values(path: Path) -> dict[tuple[str, str], bool]:
             for name in (reader.fieldnames or [])
             if name is not None
         }
-        if "keep" not in fieldnames:
+        if "keep" not in fieldnames and "source_candidate_term" not in fieldnames:
             return {}
         if "document" not in fieldnames or "candidate_term" not in fieldnames:
             raise ValueError(
                 f"{path} has a Keep column but is missing document or candidate_term."
             )
 
-        keep_values = {}
+        review_values = {}
         for line_number, row in enumerate(reader, start=2):
             document = (row.get(fieldnames["document"]) or "").strip()
             term = (row.get(fieldnames["candidate_term"]) or "").strip()
-            raw_value = (row.get(fieldnames["keep"]) or "").strip().casefold()
             if not document or not term:
                 raise ValueError(
                     f"{path} has a blank document or candidate_term on row {line_number}."
                 )
-            if raw_value in {"", "false", "0", "no"}:
-                keep = False
-            elif raw_value in {"true", "1", "yes"}:
-                keep = True
-            else:
-                raise ValueError(
-                    f"{path} has an invalid Keep value on row {line_number}: "
-                    f"{raw_value!r}"
-                )
 
-            key = candidate_key(document, term)
-            if key in keep_values and keep_values[key] != keep:
-                raise ValueError(
-                    f"{path} has conflicting Keep values for {document!r}, {term!r}."
-                )
-            keep_values[key] = keep
+            source_column = fieldnames.get("source_candidate_term")
+            source_term = (row.get(source_column) or "").strip() if source_column else ""
+            key = candidate_key(document, source_term or term)
 
-    return keep_values
+            review_value: dict[str, object] = {"candidate_term": term}
+            if "keep" in fieldnames:
+                raw_value = (row.get(fieldnames["keep"]) or "").strip().casefold()
+                if raw_value in {"", "false", "0", "no"}:
+                    review_value["Keep"] = False
+                elif raw_value in {"true", "1", "yes"}:
+                    review_value["Keep"] = True
+                else:
+                    raise ValueError(
+                        f"{path} has an invalid Keep value on row {line_number}: "
+                        f"{raw_value!r}"
+                    )
+
+            if key in review_values and review_values[key] != review_value:
+                raise ValueError(
+                    f"{path} has conflicting review values for {document!r}, "
+                    f"{source_term or term!r}."
+                )
+            review_values[key] = review_value
+
+    return review_values
 
 
 def main() -> None:
@@ -230,7 +237,7 @@ def main() -> None:
 
     output = args.output or directory / "index_candidates.csv"
     output = output.expanduser().resolve()
-    keep_values = load_keep_values(output)
+    review_values = load_review_values(output)
     output.parent.mkdir(parents=True, exist_ok=True)
 
     with output.open("w", newline="", encoding="utf-8-sig") as csvfile:
@@ -245,6 +252,7 @@ def main() -> None:
                 "source",
                 "entity_type",
                 "Keep",
+                "source_candidate_term",
             ]
         )
 
@@ -343,19 +351,22 @@ def main() -> None:
 
             for rank, candidate in enumerate(candidates, start=1):
                 score = candidate["score"]
+                generated_term = candidate["term"]
+                previous_review = review_values.get(
+                    candidate_key(path.name, generated_term),
+                    {},
+                )
                 writer.writerow(
                     [
                         path.name,
-                        candidate["term"],
+                        previous_review.get("candidate_term", generated_term),
                         f"{score:.6f}" if score is not None else "",
                         candidate["occurrences"],
                         rank,
                         candidate["source"],
                         candidate["entity_type"],
-                        keep_values.get(
-                            candidate_key(path.name, candidate["term"]),
-                            False,
-                        ),
+                        previous_review.get("Keep", False),
+                        generated_term,
                     ]
                 )
 

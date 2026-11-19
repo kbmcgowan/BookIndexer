@@ -1,4 +1,4 @@
-Best practices for Indexing that this software just doesn't do yet (these first two sections are largely cribbed from the wikipedia article on indexing).
+Best practices for Indexing that this software just doesn't do yet (these first two sections were initially cribbed from the [wikipedia article on indexing](https://en.wikipedia.org/wiki/Index_(publishing))).
 
 - Ensuring each topic/section includes a variety of relevant index entries; use two or three entries per topic
 - Understanding the audience and understand what kind of index entries they're likely to look for
@@ -11,6 +11,10 @@ Indexing pitfalls that this program embraces wholeheartedly and need to be fixed
 - Indexing 'mere mentions': "But John Major was no Winston Churchill..." indexed under 'Churchill, Winston' (this is what the reviewing interface is for, probably best not to fix this with IR)
 - References to discussions of a single topic scattered among several main headings: 'Cats, 50–62'; 'Felidae, 175–183' (TODO: maybe the review interface could have an easy way to demote a keyword to a cross-reference or sub-heading? Like if just before "Keep" we had a "Type" column with a drop-down menu for keyword, cross-reference, or sub-heading? Then maybe the UI needs a "re-sort" button that moves these rows together in the data file?)
 - Confusing similar names: Henry V of England, Henri V of France (I think this is handled by NLTK's NER methods)
+- TODO: make sure any languages mentioned in the text are (a) identified by NER and (b) labeled 'language' in the index (e.g. !Xóõ language and Yoruba language)
+- TODO: harder, figure out how to do these kind of ... clarification? annotations like the '(Maya)' in: Yucatec (Maya) language  (handle in review UI? what if the Keyword column were editable?  https://www.pythonguis.com/faq/editing-pyside6-tableview/ this could be very powerful but makes the csv file substantially more valuable/less reproducible)
+- add TextRank as a concept-identifying tool alongside TF-IDF, NER, and the current trigram hack
+
 
 Then for an overview of how an Index works in Word, see:
 
@@ -30,7 +34,7 @@ To review candidates in a desktop interface:
 
 `python3 ./review_index_candidates.py`
 
-The app opens `index_candidates.csv` by default. You can also pass another CSV, such as `index_candidates_with_ner.csv`. Select a row to see its extracted DOCX text with the term highlighted, check **Keep** for entries to retain, and save your choices.
+The app opens `index_candidates.csv` by default. You can also pass another CSV, such as `index_candidates_with_ner.csv`. Select a row to see its extracted DOCX text with the term highlighted, edit the candidate term, check **Keep** for entries to retain, and save your choices. Term edits are preserved when the generator is rerun, matched by the hidden `source_candidate_term` column.
 
 The app requires PySide6 and python-docx:
 

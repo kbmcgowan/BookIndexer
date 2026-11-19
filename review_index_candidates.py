@@ -1,4 +1,4 @@
-"""Review candidate index terms and save Keep choices to a CSV."""
+"""Review candidate index terms and save edits and Keep choices to a CSV."""
 
 import argparse
 import csv
@@ -66,12 +66,31 @@ def load_candidates(path: Path) -> tuple[list[str], list[dict[str, Any]], bool]:
         elif keep_column != "Keep":
             fieldnames[fieldnames.index(keep_column)] = "Keep"
 
+        source_term_column = next(
+            (name for name in fieldnames if name.casefold() == "source_candidate_term"),
+            None,
+        )
+        source_term_input_column = source_term_column
+        if source_term_column is None:
+            fieldnames.append("source_candidate_term")
+            source_term_column = "source_candidate_term"
+            needs_save = True
+        elif source_term_column != "source_candidate_term":
+            fieldnames[fieldnames.index(source_term_column)] = "source_candidate_term"
+            source_term_column = "source_candidate_term"
+
         rows = []
         for row_number, row in enumerate(reader, start=2):
             if None in row:
                 raise ValueError(f"CSV row {row_number} has extra values.")
             if keep_column is not None and keep_column != "Keep":
                 row["Keep"] = row.pop(keep_column, None)
+            if (
+                source_term_input_column is not None
+                and source_term_input_column in row
+                and source_term_input_column != "source_candidate_term"
+            ):
+                row["source_candidate_term"] = row.pop(source_term_input_column, None)
 
             for name in fieldnames:
                 row.setdefault(name, "")
@@ -84,6 +103,10 @@ def load_candidates(path: Path) -> tuple[list[str], list[dict[str, Any]], bool]:
                 )
             row["document"] = document
             row["candidate_term"] = term
+            source_term = row.get("source_candidate_term")
+            if not isinstance(source_term, str) or not source_term.strip():
+                row["source_candidate_term"] = term
+                needs_save = True
             raw_keep = row.get("Keep")
             if raw_keep is None or not str(raw_keep).strip():
                 needs_save = True
@@ -135,6 +158,7 @@ def extract_docx_text(path: Path) -> str:
 
 class CandidateTableModel(QAbstractTableModel):
     keep_changed = Signal()
+    candidate_changed = Signal(int)
 
     def __init__(
         self,
@@ -146,6 +170,7 @@ class CandidateTableModel(QAbstractTableModel):
         self.fieldnames = fieldnames
         self.rows = rows
         self.keep_column = self.fieldnames.index("Keep")
+        self.candidate_column = self.fieldnames.index("candidate_term")
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self.rows)
@@ -196,6 +221,8 @@ class CandidateTableModel(QAbstractTableModel):
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if index.column() == self.keep_column:
             flags |= Qt.ItemFlag.ItemIsUserCheckable
+        if index.column() == self.candidate_column:
+            flags |= Qt.ItemFlag.ItemIsEditable
         return flags
 
     def setData(
@@ -204,6 +231,26 @@ class CandidateTableModel(QAbstractTableModel):
         value: Any,
         role: int = Qt.ItemDataRole.EditRole,
     ) -> bool:
+        if (
+            index.isValid()
+            and index.column() == self.candidate_column
+            and role == Qt.ItemDataRole.EditRole
+        ):
+            term = str(value).strip()
+            if not term:
+                return False
+            row = self.rows[index.row()]
+            if row["candidate_term"] == term:
+                return True
+            row["candidate_term"] = term
+            self.dataChanged.emit(
+                index,
+                index,
+                [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole],
+            )
+            self.candidate_changed.emit(index.row())
+            return True
+
         if (
             not index.isValid()
             or index.column() != self.keep_column
@@ -329,9 +376,14 @@ class CandidateReviewWindow(QMainWindow):
                 "source": 105,
                 "entity_type": 135,
                 "Keep": 55,
+                "source_candidate_term": 0,
             }
             self.table.setColumnWidth(column, widths.get(field, 120))
+            if field == "source_candidate_term":
+                self.table.setColumnHidden(column, True)
 
+        model.candidate_changed.connect(self._mark_dirty)
+        model.candidate_changed.connect(self._candidate_term_changed)
         self.table.selectionModel().currentRowChanged.connect(
             self._current_row_changed
         )
@@ -346,6 +398,11 @@ class CandidateReviewWindow(QMainWindow):
             )
         else:
             self.statusBar().showMessage(f"Loaded {len(rows)} candidates.")
+
+    def _candidate_term_changed(self, row_index: int) -> None:
+            if self.table.currentIndex().row() == row_index:
+                index = self.model.index(row_index, self.model.candidate_column)
+                self._current_row_changed(index, index)
 
     def _choose_csv(self) -> None:
         if not self._confirm_discard():
