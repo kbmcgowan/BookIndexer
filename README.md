@@ -1,3 +1,41 @@
+## Install & Run
+
+This works on my mac. Your python3 binary might be called something else.
+
+### Install
+
+Change directory to the root of this project and execute:
+
+```sh
+python3 -m venv .BookIndexer-venv
+source .BookIndexer-venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+If you don't have it already, you need to download the nltk data using python
+
+```python
+import nltk
+nltk.download('brown')
+```
+
+subsequently you can run the indexer with:
+
+```sh
+source .BookIndexer-venv/bin/activate
+python suggest_index_terms.py
+```
+
+or you can review candidates with:
+
+```sh
+source .BookIndexer-venv/bin/activate
+python review_index_candidates.py &
+```
+
+`deactivate` will exit the venv
+
 Best practices for Indexing that this software just doesn't do yet (these first two sections were initially cribbed from the [wikipedia article on indexing](https://en.wikipedia.org/wiki/Index_(publishing))).
 
 - Ensuring each topic/section includes a variety of relevant index entries; use two or three entries per topic
@@ -30,11 +68,15 @@ To generate a list of candidate terms:
 
 The generator uses the NLTK Brown corpus as background documents for IDF, considers one-, two-, and three-word phrases, and adds up to 10 extra trigram candidates per chapter beyond the main TF-IDF list. If Brown has not been downloaded, install it with `python3 -m nltk.downloader brown`.
 
+The shared TOML preferences are in `preferences.toml`. By default, DOCX files are read from `./book/` and candidate CSVs are read/written in `./index/`, relative to the preferences file. Put the chapter DOCX files in `book/`, or change `book_path` in the reviewer’s Preferences dialog. The generator also accepts `--directory` and `--output` overrides.
+
 To review candidates in a desktop interface:
 
 `python3 ./review_index_candidates.py`
 
 The app opens `index_candidates.csv` by default. You can also pass another CSV, such as `index_candidates_with_ner.csv`. Select a row to see its extracted DOCX text with the term highlighted, edit the candidate term, check **Keep** for entries to retain, and save your choices. Term edits are preserved when the generator is rerun, matched by the hidden `source_candidate_term` column.
+
+Use the **Preferences...** button to change the book and index folders and select which candidate columns to hide. The `source` column is hidden by default; `source_candidate_term` is always hidden because it is internal matching metadata.
 
 The app requires PySide6 and python-docx:
 

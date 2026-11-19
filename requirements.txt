@@ -1,0 +1,4 @@
+python-docx
+nltk
+PySide6
+toml

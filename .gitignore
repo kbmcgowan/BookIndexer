@@ -1,4 +1,5 @@
 .DS_Store
+.BookIndexer-venv/
 book/
 index/
 *.docx

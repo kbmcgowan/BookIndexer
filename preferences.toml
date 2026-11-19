@@ -1,0 +1,17 @@
+# Can also edit using the preferences pane in the reviewer interface
+
+[indexer]
+name = "Kevin"
+role = "co-author"
+
+# configurable paths to files (and be overriden with -book and
+# -output arguments at command line)
+
+book_path = "./book"
+index_path = "./index"
+
+# possible hidden fields are: document, tfidf_score, occurrences,
+# rank, source (hidden by default, just an index in case the term
+# gets modified) ,entity_type
+
+hidden_fields = ["source", "tfidf_score", "occurrences", "rank"]

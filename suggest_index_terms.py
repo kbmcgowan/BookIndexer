@@ -17,6 +17,8 @@ from nltk.corpus import brown
 from nltk.tree import Tree
 from sklearn.feature_extraction.text import TfidfVectorizer
 
+from index_preferences import PREFERENCES_PATH, load_preferences
+
 ENTITY_LABELS = {"FACILITY", "GPE", "GSP", "LOCATION", "ORGANIZATION", "PERSON"}
 
 
@@ -152,15 +154,17 @@ def main() -> None:
     parser.add_argument(
         "--directory",
         type=Path,
-        default=Path(__file__).resolve().parent,
-        help="Folder containing the DOCX files (defaults to this script's folder).",
+        help=(
+            "Folder containing the DOCX files (defaults to book_path in "
+            f"{PREFERENCES_PATH.name})."
+        ),
     )
     parser.add_argument(
         "--output",
         type=Path,
         help=(
-            "CSV output path (defaults to index_candidates.csv in the input folder); "
-            "existing Keep values in this file are preserved."
+            "CSV output path (defaults to index_candidates.csv in index_path); "
+            "existing candidate edits and Keep values are preserved."
         ),
     )
     parser.add_argument(
@@ -198,7 +202,12 @@ def main() -> None:
     if args.trigram_top_n < 0:
         parser.error("--trigram-top-n cannot be negative")
 
-    directory = args.directory.expanduser().resolve()
+    try:
+        preferences = load_preferences()
+    except (OSError, ValueError) as error:
+        parser.error(f"Could not load {PREFERENCES_PATH}: {error}")
+
+    directory = (args.directory or preferences.book_path).expanduser().resolve()
     if not directory.is_dir():
         parser.error(f"not a directory: {directory}")
 
@@ -235,7 +244,7 @@ def main() -> None:
     analyze = vectorizer.build_analyzer()
     named_entities = [extract_named_entities(text) for text in texts]
 
-    output = args.output or directory / "index_candidates.csv"
+    output = args.output or preferences.index_path / "index_candidates.csv"
     output = output.expanduser().resolve()
     review_values = load_review_values(output)
     output.parent.mkdir(parents=True, exist_ok=True)

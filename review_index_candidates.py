@@ -18,7 +18,11 @@ from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QHeaderView,
     QHBoxLayout,
     QLabel,
@@ -27,9 +31,19 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QTableView,
+    QLineEdit,
     QTextEdit,
     QVBoxLayout,
     QWidget,
+)
+
+from index_preferences import (
+    HIDEABLE_FIELDS,
+    PREFERENCES_PATH,
+    Preferences,
+    load_preferences,
+    resolve_preference_path,
+    save_preferences,
 )
 
 
@@ -156,6 +170,79 @@ def extract_docx_text(path: Path) -> str:
     return "\n\n".join(parts)
 
 
+class PreferencesDialog(QDialog):
+    def __init__(self, preferences: Preferences, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Reviewer Preferences")
+        self.preferences = preferences
+
+        self.index_path_edit = QLineEdit(str(preferences.index_path))
+        self.book_path_edit = QLineEdit(str(preferences.book_path))
+        form = QFormLayout()
+        form.addRow("Index folder:", self._path_control(self.index_path_edit))
+        form.addRow("Book folder:", self._path_control(self.book_path_edit))
+
+        self.hidden_checkboxes = {}
+        hidden_fields_panel = QWidget()
+        hidden_fields_layout = QVBoxLayout(hidden_fields_panel)
+        hidden_fields_layout.setContentsMargins(0, 0, 0, 0)
+        for field in HIDEABLE_FIELDS:
+            checkbox = QCheckBox(field)
+            checkbox.setChecked(field in preferences.hidden_fields)
+            hidden_fields_layout.addWidget(checkbox)
+            self.hidden_checkboxes[field] = checkbox
+        form.addRow("Hide columns:", hidden_fields_panel)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._save_and_accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def _path_control(self, edit: QLineEdit) -> QWidget:
+        control = QWidget()
+        layout = QHBoxLayout(control)
+        layout.setContentsMargins(0, 0, 0, 0)
+        browse_button = QPushButton("Browse...")
+        browse_button.clicked.connect(lambda: self._browse_for_directory(edit))
+        layout.addWidget(edit, 1)
+        layout.addWidget(browse_button)
+        return control
+
+    def _browse_for_directory(self, edit: QLineEdit) -> None:
+        initial_path = edit.text().strip() or str(PREFERENCES_PATH.parent)
+        selected_path = QFileDialog.getExistingDirectory(
+            self,
+            "Choose folder",
+            initial_path,
+        )
+        if selected_path:
+            edit.setText(selected_path)
+
+    def _save_and_accept(self) -> None:
+        index_text = self.index_path_edit.text().strip()
+        book_text = self.book_path_edit.text().strip()
+        if not index_text or not book_text:
+            QMessageBox.warning(self, "Invalid preferences", "Folder paths cannot be blank.")
+            return
+
+        self.preferences = Preferences(
+            index_path=resolve_preference_path(index_text),
+            book_path=resolve_preference_path(book_text),
+            hidden_fields=tuple(
+                field
+                for field in HIDEABLE_FIELDS
+                if self.hidden_checkboxes[field].isChecked()
+            ),
+        )
+        self.accept()
+
+
 class CandidateTableModel(QAbstractTableModel):
     keep_changed = Signal()
     candidate_changed = Signal(int)
@@ -280,9 +367,10 @@ class CandidateTableModel(QAbstractTableModel):
 
 
 class CandidateReviewWindow(QMainWindow):
-    def __init__(self, csv_path: Path) -> None:
+    def __init__(self, csv_path: Path, preferences: Preferences) -> None:
         super().__init__()
         self.csv_path = csv_path.resolve()
+        self.preferences = preferences
         self.document_cache: dict[Path, str] = {}
         self.model: CandidateTableModel | None = None
         self.fieldnames: list[str] = []
@@ -297,6 +385,8 @@ class CandidateReviewWindow(QMainWindow):
     def _build_ui(self) -> None:
         open_button = QPushButton("Open CSV...")
         open_button.clicked.connect(self._choose_csv)
+        preferences_button = QPushButton("Preferences...")
+        preferences_button.clicked.connect(self._edit_preferences)
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self._save)
         self.save_button.setEnabled(False)
@@ -311,6 +401,7 @@ class CandidateReviewWindow(QMainWindow):
         button_row = QWidget()
         button_layout = QHBoxLayout(button_row)
         button_layout.addWidget(open_button)
+        button_layout.addWidget(preferences_button)
         button_layout.addWidget(self.save_button)
         button_layout.addWidget(self.path_label, 1)
         toolbar_layout.addWidget(button_row)
@@ -379,8 +470,7 @@ class CandidateReviewWindow(QMainWindow):
                 "source_candidate_term": 0,
             }
             self.table.setColumnWidth(column, widths.get(field, 120))
-            if field == "source_candidate_term":
-                self.table.setColumnHidden(column, True)
+        self._apply_hidden_columns()
 
         model.candidate_changed.connect(self._mark_dirty)
         model.candidate_changed.connect(self._candidate_term_changed)
@@ -400,9 +490,34 @@ class CandidateReviewWindow(QMainWindow):
             self.statusBar().showMessage(f"Loaded {len(rows)} candidates.")
 
     def _candidate_term_changed(self, row_index: int) -> None:
-            if self.table.currentIndex().row() == row_index:
-                index = self.model.index(row_index, self.model.candidate_column)
-                self._current_row_changed(index, index)
+        if self.table.currentIndex().row() == row_index and self.model is not None:
+            index = self.model.index(row_index, self.model.candidate_column)
+            self._current_row_changed(index, index)
+
+    def _apply_hidden_columns(self) -> None:
+        if self.model is None:
+            return
+        hidden_fields = set(self.preferences.hidden_fields)
+        hidden_fields.add("source_candidate_term")
+        for column, field in enumerate(self.fieldnames):
+            self.table.setColumnHidden(column, field in hidden_fields)
+
+    def _edit_preferences(self) -> None:
+        dialog = PreferencesDialog(self.preferences, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            save_preferences(dialog.preferences)
+        except (OSError, ValueError) as error:
+            QMessageBox.critical(self, "Could not save preferences", str(error))
+            return
+
+        self.preferences = dialog.preferences
+        self._apply_hidden_columns()
+        current = self.table.currentIndex()
+        if current.isValid():
+            self._current_row_changed(current, current)
+        self.statusBar().showMessage(f"Saved preferences to {PREFERENCES_PATH}")
 
     def _choose_csv(self) -> None:
         if not self._confirm_discard():
@@ -410,7 +525,11 @@ class CandidateReviewWindow(QMainWindow):
         file_name, _ = QFileDialog.getOpenFileName(
             self,
             "Open candidate CSV",
-            str(self.csv_path.parent),
+            str(
+                self.preferences.index_path
+                if self.preferences.index_path.is_dir()
+                else self.csv_path.parent
+            ),
             "CSV files (*.csv);;All files (*)",
         )
         if not file_name:
@@ -434,7 +553,7 @@ class CandidateReviewWindow(QMainWindow):
         term = str(row["candidate_term"]).strip()
         document_path = Path(document_name)
         if not document_path.is_absolute():
-            document_path = self.csv_path.parent / document_path
+            document_path = self.preferences.book_path / document_path
         document_path = document_path.resolve()
 
         try:
@@ -493,7 +612,7 @@ class CandidateReviewWindow(QMainWindow):
     def _mark_dirty(self) -> None:
         self.dirty = True
         self._update_save_state()
-        self.statusBar().showMessage("Unsaved Keep choices")
+        self.statusBar().showMessage("Unsaved candidate changes")
 
     def _update_save_state(self) -> None:
         self.save_button.setEnabled(self.dirty)
@@ -519,8 +638,8 @@ class CandidateReviewWindow(QMainWindow):
             return True
         answer = QMessageBox.question(
             self,
-            "Unsaved Keep choices",
-            "Save your Keep choices before continuing?",
+            "Unsaved candidate changes",
+            "Save your candidate edits and Keep choices before continuing?",
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
@@ -545,19 +664,40 @@ def main() -> int:
         "csv",
         nargs="?",
         type=Path,
-        default=Path(__file__).resolve().parent / "index_candidates.csv",
-        help="Candidate CSV (defaults to index_candidates.csv beside this script).",
+        help=(
+            "Candidate CSV (defaults to index_candidates.csv in index_path "
+            f"from {PREFERENCES_PATH.name})."
+        ),
     )
     args = parser.parse_args()
 
     app = QApplication(sys.argv)
     app.setApplicationName("Index Candidate Review")
-    csv_path = args.csv.expanduser().resolve()
+    try:
+        preferences = load_preferences()
+    except (OSError, ValueError) as error:
+        QMessageBox.critical(
+            None,
+            "Could not load preferences",
+            f"{PREFERENCES_PATH}\n\n{error}",
+        )
+        return 1
+
+    csv_path = (
+        args.csv.expanduser().resolve()
+        if args.csv
+        else preferences.index_path / "index_candidates.csv"
+    )
     if not csv_path.is_file():
+        initial_directory = (
+            preferences.index_path
+            if preferences.index_path.is_dir()
+            else PREFERENCES_PATH.parent
+        )
         selected_path, _ = QFileDialog.getOpenFileName(
             None,
             "Open candidate CSV",
-            str(csv_path.parent),
+            str(initial_directory),
             "CSV files (*.csv);;All files (*)",
         )
         if not selected_path:
@@ -565,7 +705,7 @@ def main() -> int:
         csv_path = Path(selected_path)
 
     try:
-        window = CandidateReviewWindow(csv_path)
+        window = CandidateReviewWindow(csv_path, preferences)
     except (OSError, csv.Error, ValueError) as error:
         QMessageBox.critical(None, "Could not open CSV", str(error))
         return 1
