@@ -103,7 +103,7 @@ def load_review_values(path: Path) -> dict[tuple[str, str], dict[str, object]]:
             return {}
         if "document" not in fieldnames or "candidate_term" not in fieldnames:
             raise ValueError(
-                f"{path} has a Keep column but is missing document or candidate_term."
+                f"{path} has review data but is missing document or candidate_term."
             )
 
         review_values = {}
