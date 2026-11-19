@@ -1,5 +1,6 @@
 .DS_Store
 .BookIndexer-venv/
+__pycache__/
 book/
 index/
 *.docx

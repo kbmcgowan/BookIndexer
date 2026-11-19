@@ -280,6 +280,8 @@ class CandidateTableModel(QAbstractTableModel):
             )
         if role == Qt.ItemDataRole.DisplayRole and field != "Keep":
             return "" if value is None else str(value)
+        if role == Qt.ItemDataRole.EditRole and field == "candidate_term":
+            return "" if value is None else str(value)
         if role == Qt.ItemDataRole.TextAlignmentRole and field in {
             "rank",
             "occurrences",
